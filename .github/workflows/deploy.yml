@@ -26,13 +26,9 @@ jobs:
         with:
           bun-version: latest
       - run: bun install --frozen-lockfile || bun install
-      - name: Generate static site from the YouTube feed
-        env:
-          SITE_URL: ${{ steps.pages.outputs.base_url || '' }}
-        run: bun run build:static
       - uses: actions/configure-pages@v5
         id: pages
-      - name: Rebuild with the resolved Pages URL
+      - name: Generate static site from the YouTube feed
         env:
           SITE_URL: ${{ steps.pages.outputs.origin }}
           BASE_PATH: ${{ steps.pages.outputs.base_path }}
