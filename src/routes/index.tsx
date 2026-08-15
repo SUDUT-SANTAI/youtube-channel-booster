@@ -88,7 +88,7 @@ function Index() {
       {feed.videos.length === 0 && (
         <section className="mx-auto max-w-6xl px-5 pb-24">
           <div className="rounded-xl border border-border bg-surface p-8 text-muted-foreground">
-            Feed belum bisa dibaca saat ini. Muat ulang halaman beberapa saat lagi.
+            Belum ada video publik di feed channel ini. Begitu video baru diunggah ke YouTube, halaman video-nya akan muncul di sini secara otomatis beserta entri sitemap-nya.
           </div>
         </section>
       )}
