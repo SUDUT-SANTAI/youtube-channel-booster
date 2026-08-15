@@ -1,0 +1,48 @@
+name: Deploy static site to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  # Regenerate every 6 hours so new YouTube uploads get indexed automatically.
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile || bun install
+      - uses: actions/configure-pages@v5
+        id: pages
+      - name: Generate static site from the YouTube feed
+        env:
+          SITE_URL: ${{ steps.pages.outputs.origin }}
+          BASE_PATH: ${{ steps.pages.outputs.base_path }}
+        run: bun run build:static
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist-static
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
