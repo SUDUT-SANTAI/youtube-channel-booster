@@ -19,7 +19,7 @@ export interface YoutubeFeed {
 
 function pick(block: string, tag: string): string {
   const m = block.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`));
-  return m ? decodeXml(m[1]) : "";
+  return m?.[1] ? decodeXml(m[1]) : "";
 }
 
 function decodeXml(value: string): string {
@@ -35,7 +35,7 @@ function decodeXml(value: string): string {
 }
 
 export function parseYoutubeFeed(xml: string): YoutubeFeed {
-  const channelTitle = pick(xml.split("<entry>")[0], "title") || "YouTube Channel";
+  const channelTitle = pick(xml.split("<entry>")[0] ?? "", "title") || "YouTube Channel";
   const entries = xml.split("<entry>").slice(1);
 
   const videos: YoutubeVideo[] = entries.map((entry) => {
