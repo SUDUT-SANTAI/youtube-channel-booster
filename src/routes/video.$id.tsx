@@ -37,7 +37,7 @@ export const Route = createFileRoute("/video/$id")({
             name: video.title,
             description: desc,
             thumbnailUrl: [video.thumbnail],
-            uploadDate: video.published,
+            ...(video.published ? { uploadDate: video.published } : {}),
             embedUrl: `https://www.youtube.com/embed/${video.id}`,
             contentUrl: video.url,
             publisher: { "@type": "Organization", name: loaderData.channelTitle },
@@ -82,9 +82,11 @@ function VideoPage() {
         <h1 className="mt-4 font-display text-3xl leading-tight tracking-tight sm:text-4xl">
           {video.title}
         </h1>
-        <time className="mt-3 block text-sm text-muted-foreground" dateTime={video.published}>
-          Dipublikasikan {formatDate(video.published)}
-        </time>
+        {video.published && (
+          <time className="mt-3 block text-sm text-muted-foreground" dateTime={video.published}>
+            Dipublikasikan {formatDate(video.published)}
+          </time>
+        )}
 
         <div className="mt-7 overflow-hidden rounded-2xl border border-border bg-surface">
           <div className="aspect-video">

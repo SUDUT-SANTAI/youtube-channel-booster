@@ -77,8 +77,14 @@ async function fetchRssFeed(channelId: string): Promise<YoutubeFeed> {
   }
 }
 
+const feedCache = new Map<string, { at: number; feed: YoutubeFeed }>();
+const FEED_TTL_MS = 10 * 60 * 1000;
+
 /** RSS (rich metadata, newest 15) merged with the full uploads playlist (all videos). */
 export async function fetchYoutubeFeed(channelId = YOUTUBE_CHANNEL_ID): Promise<YoutubeFeed> {
+  const cached = feedCache.get(channelId);
+  if (cached && Date.now() - cached.at < FEED_TTL_MS) return cached.feed;
+
   const rss = await fetchRssFeed(channelId);
   let uploads: YoutubeVideo[] = [];
   try {
@@ -101,11 +107,13 @@ export async function fetchYoutubeFeed(channelId = YOUTUBE_CHANNEL_ID): Promise<
     }
   }
 
-  return {
+  const feed: YoutubeFeed = {
     channelTitle: rss.channelTitle,
     channelUrl: `https://www.youtube.com/channel/${channelId}`,
     videos: ordered.slice(0, MAX_VIDEOS),
   };
+  if (feed.videos.length) feedCache.set(channelId, { at: Date.now(), feed });
+  return feed;
 }
 
 export function excerpt(text: string, max = 155): string {

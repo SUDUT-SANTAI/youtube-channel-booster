@@ -89,9 +89,11 @@ function Index() {
                     {video.title}
                   </h2>
                 </Link>
-                <time className="mt-1 block text-xs text-muted-foreground" dateTime={video.published}>
-                  {formatDate(video.published)}
-                </time>
+                {video.published && (
+                  <time className="mt-1 block text-xs text-muted-foreground" dateTime={video.published}>
+                    {formatDate(video.published)}
+                  </time>
+                )}
               </article>
             ))}
           </div>
