@@ -181,6 +181,25 @@ function runsText(value: any): string {
   return "";
 }
 
+function fromLockup(lockup: any): YoutubeVideo | null {
+  const id = lockup?.contentId;
+  if (typeof id !== "string" || id.length !== 11) return null;
+  if (lockup?.contentType && lockup.contentType !== "LOCKUP_CONTENT_TYPE_VIDEO") return null;
+  const title =
+    lockup?.metadata?.lockupMetadataViewModel?.title?.content ??
+    runsText(lockup?.metadata?.lockupMetadataViewModel?.title);
+  return {
+    id,
+    title: title || "Video",
+    description: "",
+    published: "",
+    updated: "",
+    author: "",
+    thumbnail: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
+    url: `https://www.youtube.com/watch?v=${id}`,
+  };
+}
+
 function toVideo(renderer: any): YoutubeVideo | null {
   const id = renderer?.videoId;
   if (typeof id !== "string" || !id) return null;
@@ -232,9 +251,12 @@ export async function fetchAllUploads(
   let continuation: string | null = null;
 
   const ingest = (payload: any) => {
-    for (const r of collect(payload, "playlistVideoRenderer", [])) {
-      const v = toVideo(r);
-      if (v && !seen.has(v.id)) {
+    const found: YoutubeVideo[] = [
+      ...collect(payload, "playlistVideoRenderer", []).map(toVideo),
+      ...collect(payload, "lockupViewModel", []).map(fromLockup),
+    ].filter((v): v is YoutubeVideo => Boolean(v));
+    for (const v of found) {
+      if (!seen.has(v.id)) {
         seen.add(v.id);
         videos.push(v);
       }
