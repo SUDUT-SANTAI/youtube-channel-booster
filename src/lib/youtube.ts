@@ -60,7 +60,7 @@ export function parseYoutubeFeed(xml: string): YoutubeFeed {
   };
 }
 
-export async function fetchYoutubeFeed(channelId = YOUTUBE_CHANNEL_ID): Promise<YoutubeFeed> {
+async function fetchRssFeed(channelId: string): Promise<YoutubeFeed> {
   try {
     const res = await fetch(
       `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`,
@@ -77,6 +77,45 @@ export async function fetchYoutubeFeed(channelId = YOUTUBE_CHANNEL_ID): Promise<
   }
 }
 
+const feedCache = new Map<string, { at: number; feed: YoutubeFeed }>();
+const FEED_TTL_MS = 10 * 60 * 1000;
+
+/** RSS (rich metadata, newest 15) merged with the full uploads playlist (all videos). */
+export async function fetchYoutubeFeed(channelId = YOUTUBE_CHANNEL_ID): Promise<YoutubeFeed> {
+  const cached = feedCache.get(channelId);
+  if (cached && Date.now() - cached.at < FEED_TTL_MS) return cached.feed;
+
+  const rss = await fetchRssFeed(channelId);
+  let uploads: YoutubeVideo[] = [];
+  try {
+    uploads = await fetchAllUploads(channelId);
+  } catch {
+    uploads = [];
+  }
+
+  const byId = new Map<string, YoutubeVideo>();
+  for (const v of uploads) byId.set(v.id, v);
+  for (const v of rss.videos) byId.set(v.id, { ...byId.get(v.id), ...v });
+
+  const ordered: YoutubeVideo[] = [];
+  const pushed = new Set<string>();
+  for (const v of [...rss.videos, ...uploads]) {
+    const merged = byId.get(v.id);
+    if (merged && !pushed.has(v.id)) {
+      pushed.add(v.id);
+      ordered.push(merged);
+    }
+  }
+
+  const feed: YoutubeFeed = {
+    channelTitle: rss.channelTitle,
+    channelUrl: `https://www.youtube.com/channel/${channelId}`,
+    videos: ordered.slice(0, MAX_VIDEOS),
+  };
+  if (feed.videos.length) feedCache.set(channelId, { at: Date.now(), feed });
+  return feed;
+}
+
 export function excerpt(text: string, max = 155): string {
   const clean = text.replace(/\s+/g, " ").trim();
   if (!clean) return "";
@@ -87,5 +126,176 @@ export function formatDate(iso: string, locale = "id-ID"): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleDateString(locale, { day: "numeric", month: "long", year: "numeric" });
+  return d.toLocaleDateString(locale, {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+export const MAX_VIDEOS = 999;
+
+function extractJson(html: string, marker: string): any | null {
+  const start = html.indexOf(marker);
+  if (start === -1) return null;
+  const open = html.indexOf("{", start);
+  if (open === -1) return null;
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = open; i < html.length; i++) {
+    const c = html[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === "{") depth++;
+    else if (c === "}") {
+      depth--;
+      if (depth === 0) {
+        try {
+          return JSON.parse(html.slice(open, i + 1));
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function collect(node: any, key: string, out: any[]): any[] {
+  if (!node || typeof node !== "object") return out;
+  if (Array.isArray(node)) {
+    for (const item of node) collect(item, key, out);
+    return out;
+  }
+  for (const [k, v] of Object.entries(node)) {
+    if (k === key) out.push(v);
+    else collect(v, key, out);
+  }
+  return out;
+}
+
+function runsText(value: any): string {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  if (typeof value.simpleText === "string") return value.simpleText;
+  if (Array.isArray(value.runs)) return value.runs.map((r: any) => r.text ?? "").join("");
+  return "";
+}
+
+function fromLockup(lockup: any): YoutubeVideo | null {
+  const id = lockup?.contentId;
+  if (typeof id !== "string" || id.length !== 11) return null;
+  if (lockup?.contentType && lockup.contentType !== "LOCKUP_CONTENT_TYPE_VIDEO") return null;
+  const title =
+    lockup?.metadata?.lockupMetadataViewModel?.title?.content ??
+    runsText(lockup?.metadata?.lockupMetadataViewModel?.title);
+  return {
+    id,
+    title: title || "Video",
+    description: "",
+    published: "",
+    updated: "",
+    author: "",
+    thumbnail: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
+    url: `https://www.youtube.com/watch?v=${id}`,
+  };
+}
+
+function toVideo(renderer: any): YoutubeVideo | null {
+  const id = renderer?.videoId;
+  if (typeof id !== "string" || !id) return null;
+  const title = runsText(renderer.title);
+  const thumbs = renderer?.thumbnail?.thumbnails;
+  const thumbnail =
+    (Array.isArray(thumbs) && thumbs.length ? thumbs[thumbs.length - 1].url : null) ??
+    `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+  return {
+    id,
+    title: title || "Video",
+    description: "",
+    published: "",
+    updated: "",
+    author: "",
+    thumbnail,
+    url: `https://www.youtube.com/watch?v=${id}`,
+  };
+}
+
+function uploadsPlaylistId(channelId: string): string {
+  return `UU${channelId.slice(2)}`;
+}
+
+/** Reads the full uploads playlist (paginated) so all videos are indexable. */
+export async function fetchAllUploads(
+  channelId = YOUTUBE_CHANNEL_ID,
+  max = MAX_VIDEOS,
+): Promise<YoutubeVideo[]> {
+  const headers = {
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+    "Accept-Language": "en-US,en;q=0.9",
+  };
+  const res = await fetch(
+    `https://www.youtube.com/playlist?list=${uploadsPlaylistId(channelId)}&hl=en`,
+    { headers },
+  );
+  if (!res.ok) throw new Error(`Playlist request failed: ${res.status}`);
+  const html = await res.text();
+
+  const apiKey = html.match(/"INNERTUBE_API_KEY":"([^"]+)"/)?.[1];
+  const clientVersion = html.match(/"INNERTUBE_CLIENT_VERSION":"([^"]+)"/)?.[1] ?? "2.20240101.00.00";
+  const data = extractJson(html, "ytInitialData");
+  if (!data) throw new Error("ytInitialData not found");
+
+  const videos: YoutubeVideo[] = [];
+  const seen = new Set<string>();
+  let continuation: string | null = null;
+
+  const ingest = (payload: any) => {
+    const found: YoutubeVideo[] = [
+      ...collect(payload, "playlistVideoRenderer", []).map(toVideo),
+      ...collect(payload, "lockupViewModel", []).map(fromLockup),
+    ].filter((v): v is YoutubeVideo => Boolean(v));
+    for (const v of found) {
+      if (!seen.has(v.id)) {
+        seen.add(v.id);
+        videos.push(v);
+      }
+    }
+    const cont = collect(payload, "continuationItemRenderer", [])
+      .map((c: any) => c?.continuationEndpoint?.continuationCommand?.token)
+      .filter((t: any) => typeof t === "string" && t);
+    continuation = cont.length ? cont[cont.length - 1] : null;
+  };
+
+  ingest(data);
+
+  let guard = 0;
+  while (continuation && videos.length < max && apiKey && guard < 50) {
+    guard++;
+    const next: Response = await fetch(
+      `https://www.youtube.com/youtubei/v1/browse?key=${apiKey}&prettyPrint=false`,
+      {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          context: { client: { clientName: "WEB", clientVersion, hl: "en", gl: "US" } },
+          continuation,
+        }),
+      },
+    );
+    if (!next.ok) break;
+    const before = videos.length;
+    ingest(await next.json());
+    if (videos.length === before) break;
+  }
+
+  return videos.slice(0, max);
 }
