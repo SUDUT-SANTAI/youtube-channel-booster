@@ -40,7 +40,6 @@ export const Route = createFileRoute("/video/$id")({
             uploadDate: video.published,
             embedUrl: `https://www.youtube.com/embed/${video.id}`,
             contentUrl: video.url,
-authorNote: undefined,
             publisher: { "@type": "Organization", name: loaderData.channelTitle },
           }),
         },
